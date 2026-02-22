@@ -1,10 +1,3 @@
-import webbrowser
-import sys
-import time
-
-if getattr(sys, 'frozen', False):
-    time.sleep(3)           # wait for server to start
-    webbrowser.open_new("http://localhost:8501")
 import streamlit as st
 import cv2
 import numpy as np
@@ -196,3 +189,4 @@ else:
         cap.release()
 
    
+
