@@ -3,52 +3,28 @@ import cv2
 import numpy as np
 import time
 
-# Display sizes for resized preview
+# Display sizes
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 360
 
-# Title
 st.title("Underwater Video Enhancer")
-st.markdown("""
-Upload a video or use live camera to see real-time enhancement with color correction and CLAHE.
-Adjust sliders to tune results.
-""")
+st.markdown("Upload a video or use live camera. Adjust sliders for real-time tuning.")
 
-# Sidebar controls
-st.sidebar.header("Enhancement Settings")
+# Sidebar
+st.sidebar.header("Settings")
+clip_limit = st.sidebar.slider("CLAHE Clip Limit", 0.5, 6.0, 2.5, 0.1)
+color_boost = st.sidebar.slider("Color Boost Factor", 0.5, 3.0, 1.0, 0.1)
+display_mode = st.sidebar.radio("Display Mode", ["Side-by-Side", "Enhanced Only"])
 
-clip_limit = st.sidebar.slider(
-    "CLAHE Clip Limit (contrast strength)",
-    0.5, 6.0, 2.5, 0.1,
-    help="Higher values increase contrast but may add noise"
-)
+input_option = st.radio("Input", ["Upload Video", "Live Camera"])
 
-color_boost = st.sidebar.slider(
-    "Color Boost Factor",
-    0.5, 3.0, 1.0, 0.1,
-    help="Higher values strengthen red/green correction"
-)
-
-display_mode = st.sidebar.radio(
-    "Display Mode",
-    ["Side-by-Side", "Enhanced Only"]
-)
-
-input_option = st.radio(
-    "Input Source",
-    ["Upload Video", "Live Camera"]
-)
-
-# Placeholders
 frame_placeholder = st.empty()
 status_text = st.empty()
 progress_bar = st.progress(0)
 
-# Enhancement function
 def enhance_frame(frame, clip_limit, color_boost):
     frame_float = frame.astype(np.float32) / 255.0
     b, g, r = cv2.split(frame_float)
-
     mean_b = np.mean(b)
     mean_g = np.mean(g)
     mean_r = np.mean(r)
@@ -59,7 +35,6 @@ def enhance_frame(frame, clip_limit, color_boost):
     b_corrected = b
 
     corrected = cv2.merge([b_corrected, g_corrected, r_corrected])
-
     corrected_uint8 = (corrected * 255).astype(np.uint8)
     lab = cv2.cvtColor(corrected_uint8, cv2.COLOR_BGR2LAB)
     l, a, b_lab = cv2.split(lab)
@@ -69,42 +44,49 @@ def enhance_frame(frame, clip_limit, color_boost):
 
     lab_enhanced = cv2.merge([l_enhanced, a, b_lab])
     enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
-
     return enhanced
 
-# Upload Video – Fixed version with progress bar & skipped frames
+# Upload Video – with Pause/Resume
 if input_option == "Upload Video":
-    uploaded_file = st.file_uploader(
-        "Choose a video file",
-        type=["mp4", "avi", "mov"],
-        help="MP4 recommended. Keep file <50MB for fast processing"
-    )
+    uploaded_file = st.file_uploader("Choose video", type=["mp4", "avi", "mov"])
 
     if uploaded_file is not None:
-        temp_path = "temp_upload.mp4"
+        temp_path = "temp_video.mp4"
         with open(temp_path, "wb") as f:
             f.write(uploaded_file.read())
 
         cap = cv2.VideoCapture(temp_path)
         if not cap.isOpened():
-            st.error("Could not open video.")
+            st.error("Cannot open video")
         else:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            status_text.success(f"Video loaded! {total_frames} frames total.")
+            status_text.success(f"Video loaded – {total_frames} frames")
 
-            progress_bar.progress(0)
-            current_frame_placeholder = st.empty()
+            # Controls
+            col1, col2 = st.columns(2)
+            pause_btn = col1.button("Pause" if 'playing' not in st.session_state else "Resume")
+            stop_btn = col2.button("Stop")
 
-            frame_index = 0
-            processed_frames = 0
-            skip_frames = 5  # Process every 5th frame to avoid flicker & timeout
+            if 'playing' not in st.session_state:
+                st.session_state.playing = True
+                st.session_state.frame_index = 0
 
-            while cap.isOpened():
+            if pause_btn:
+                st.session_state.playing = not st.session_state.playing
+
+            if stop_btn:
+                st.session_state.playing = False
+                st.session_state.frame_index = 0
+                cap.release()
+                st.experimental_rerun()
+
+            if st.session_state.playing:
+                progress_bar.progress(st.session_state.frame_index / total_frames)
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, st.session_state.frame_index)
                 ret, frame = cap.read()
-                if not ret:
-                    break
 
-                if frame_index % skip_frames == 0:
+                if ret:
                     enhanced = enhance_frame(frame, clip_limit, color_boost)
 
                     original_small = cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
@@ -116,38 +98,33 @@ if input_option == "Upload Video":
                         display = enhanced_small
 
                     display_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-                    current_frame_placeholder.image(display_rgb, channels="RGB", use_column_width=True)
+                    frame_placeholder.image(display_rgb, channels="RGB", use_column_width=True)
 
-                    processed_frames += 1
+                    st.session_state.frame_index += 1
 
-                # Update progress bar
-                progress = (frame_index + 1) / total_frames
-                progress_bar.progress(progress)
-
-                frame_index += 1
-
-                if frame_index > 1200:  # Safety limit (~40s at 30fps)
-                    status_text.warning("Long video – preview stopped after 1200 frames.")
-                    break
+                    # Auto pause at end
+                    if st.session_state.frame_index >= total_frames:
+                        st.session_state.playing = False
+                        status_text.success("Video finished!")
+                else:
+                    st.session_state.playing = False
+                    status_text.success("End of video.")
 
             cap.release()
-            status_text.success(f"Preview complete! Processed {processed_frames} frames (every {skip_frames}th).")
 
-# Live Camera
+# Live Camera (unchanged)
 else:
-    st.info("Starting live camera... Allow browser camera access.")
-
+    st.info("Live camera starting... Allow access.")
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        st.error("Camera not detected. Try changing to index 1 or check permissions.")
+        st.error("No camera detected.")
     else:
-        status_text.success("Live camera connected! Real-time enhancement active.")
+        status_text.success("Live feed active.")
 
         while True:
             ret, frame = cap.read()
             if not ret:
-                st.error("Failed to read frame.")
                 break
 
             enhanced = enhance_frame(frame, clip_limit, color_boost)
@@ -163,8 +140,7 @@ else:
             display_rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
             frame_placeholder.image(display_rgb, channels="RGB", use_column_width=True)
 
-            if st.button("Stop Live Feed"):
-                status_text.info("Live feed stopped.")
+            if st.button("Stop Live"):
                 break
 
             time.sleep(0.03)
